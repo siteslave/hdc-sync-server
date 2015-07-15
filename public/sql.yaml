@@ -1,0 +1,529 @@
+# 101 อัตราส่วนการตายมารดา
+k101:
+    result: >-
+        SELECT "101" AS kpi_id, "{province}" as province,
+        chospital.hoscode as hospcode, DATE_FORMAT(adm.DATETIME_DISCH, "%Y") as s_year,
+        DATE_FORMAT(adm.DATETIME_DISCH, "%m") as s_month, COUNT(DISTINCT adm.PID, adm.HOSPCODE) as total
+        FROM  admission adm
+        INNER JOIN diagnosis_ipd dx ON dx.HOSPCODE = adm.HOSPCODE
+        AND dx.PID = adm.PID  AND dx.AN = adm.AN
+        INNER JOIN chospital ON adm.HOSPCODE = chospital.hoscode
+        WHERE adm.DISCHSTATUS IN ("8","9") AND adm.HOSPCODE IN
+        (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03","06","07","05","11","12","15","13","14","18")
+        AND chospital.provcode = "{province}"
+        )
+        AND dx.DIAGCODE BETWEEN "O80" and "O849"
+        AND adm.DATETIME_DISCH BETWEEN "{start}" and "{end}"
+        GROUP BY hospcode, s_year, s_month
+    target: >-
+        SELECT "101" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province,
+        h.HOSCODE as hospcode, IFNULL(SUM(labor.LBORN), 0) AS total
+        FROM labor
+        INNER JOIN chospital h ON labor.HOSPCODE = h.hoscode
+        WHERE  h.provcode = {province} AND
+        ((h.hostype IN ("03","06","07","05","11","12","15","13","14","18")
+        AND labor.BPLACE IN ("1","3","4"))
+        OR
+        (h.hostype NOT in ("03","06","07","05","11","12","15","13","14","18")
+        AND labor.BPLACE in ("2","3","5")
+        )) AND labor.BDATE BETWEEN "{start}" and "{end}" GROUP BY hospcode
+
+# 102  ร้อยละของเด็กอายุ 0 – 5 ปี มีพัฒนาการสมวัย  18,30  เดือน
+k102:
+    result: >-
+        SELECT "102" AS kpi_id, "{province}" AS province,
+        n.HOSPCODE AS hospcode, COUNT(DISTINCT n.PID, n.HOSPCODE) AS total,
+        DATE_FORMAT(n.DATE_SERV, "%m") AS s_month,
+        DATE_FORMAT(n.DATE_SERV, "%Y") AS s_year
+        FROM nutrition AS n
+        INNER JOIN person AS p ON n.HOSPCODE=p.HOSPCODE AND n.PID=p.PID
+        WHERE p.DISCHARGE="9" AND p.NATION="099" AND n.CHILDDEVELOP="1"
+        AND n.CHILDDEVELOP IN (SELECT id_childdevelop FROM cchilddevelop)
+        AND TIMESTAMPDIFF(MONTH, p.BIRTH, n.DATE_SERV) in(18, 30)
+        AND n.DATE_SERV BETWEEN "{start}" AND "{end}"
+        AND n.HOSPCODE IN (
+        SELECT hoscode
+        FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}")
+        GROUP BY n.HOSPCODE, s_month, s_year
+    target: >-
+        SELECT "102" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, n.HOSPCODE AS hospcode,
+        COUNT(DISTINCT n.PID, n.HOSPCODE) AS total
+        FROM nutrition AS n
+        INNER JOIN person AS p ON n.HOSPCODE=p.HOSPCODE AND n.PID=p.PID
+        WHERE p.DISCHARGE="9" AND p.NATION="099"
+        AND TIMESTAMPDIFF(MONTH, p.BIRTH, n.DATE_SERV) IN (18, 30)
+        AND n.DATE_SERV BETWEEN "{start}" AND "{end}"
+        AND n.HOSPCODE IN (
+        SELECT hoscode
+        FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND provcode = "{province}")
+        GROUP BY n.HOSPCODE
+
+# 103  ร้อยละของเด็กนักเรียนมีภาวะเริ่มอ้วนและอ้วน
+k103:
+    result: >-
+        SELECT "103" AS kpi_id, "{province}" AS province, rs.HOSPCODE AS hospcode, COUNT(DISTINCT rs.PID, rs.HOSPCODE) AS total,
+        DATE_FORMAT(rs.DATE_SERV, "%Y") AS s_year, DATE_FORMAT(rs.DATE_SERV, "%m") AS s_month
+        FROM (
+        SELECT n.HOSPCODE,n.PID, n.DATE_SERV,
+        nutri_cal(TIMESTAMPDIFF(MONTH, p.BIRTH, MAX(n.DATE_SERV)), p.SEX, 1, n.HEIGHT, n.WEIGHT) AS w_rs
+        FROM nutrition AS n
+        INNER JOIN person AS p ON n.HOSPCODE=p.HOSPCODE AND n.PID=p.PID
+        INNER JOIN (SELECT HOSPCODE, PID, MAX(DATE_SERV) AS DATE_SERV FROM nutrition
+        WHERE DATE_SERV BETWEEN  "{start}" AND "{end}"
+        GROUP BY HOSPCODE, PID) AS n1 ON n.HOSPCODE=n1.HOSPCODE AND n.PID=n1.PID AND n.DATE_SERV=n1.DATE_SERV
+        AND n.PID=n1.PID AND n.DATE_SERV=n1.DATE_SERV
+        INNER JOIN chospital AS h ON n.HOSPCODE = h.hoscode
+        WHERE n.DATE_SERV BETWEEN  "{start}" AND "{end}"
+        AND TIMESTAMPDIFF(YEAR, p.BIRTH, n.DATE_SERV) BETWEEN 5 AND 14
+        AND h.provcode = "{province}" AND h.hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        GROUP BY n.HOSPCODE, n.PID) AS rs WHERE rs.w_rs IN ("4", "5")
+        GROUP BY rs.HOSPCODE, s_year, s_month
+
+    target: >-
+        SELECT "103" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, rs.HOSPCODE AS hospcode,
+        COUNT(DISTINCT rs.PID, rs.HOSPCODE) AS total
+        FROM (SELECT n.HOSPCODE,n.PID, n.DATE_SERV,
+        nutri_cal(TIMESTAMPDIFF(MONTH, p.BIRTH, MAX(n.DATE_SERV)), p.SEX, 1, n.HEIGHT, n.WEIGHT) AS w_rs
+        FROM nutrition AS n
+        INNER JOIN person AS p ON n.HOSPCODE=p.HOSPCODE AND n.PID=p.PID
+        INNER JOIN (SELECT HOSPCODE, PID, MAX(DATE_SERV) AS DATE_SERV FROM nutrition
+        WHERE DATE_SERV BETWEEN  "{start}" AND "{end}"
+        GROUP BY HOSPCODE, PID) AS n1 ON n.HOSPCODE=n1.HOSPCODE AND n.PID=n1.PID AND n.DATE_SERV=n1.DATE_SERV
+        INNER JOIN chospital AS h ON n.HOSPCODE = h.hoscode
+        WHERE n.DATE_SERV BETWEEN  "{start}" AND "{end}"
+        AND TIMESTAMPDIFF(YEAR, p.BIRTH, n.DATE_SERV) BETWEEN 5 AND 14
+        AND h.provcode = "{province}" and h.hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        GROUP BY n.HOSPCODE, n.PID) AS rs GROUP BY rs.HOSPCODE
+#  104 อัตราการเสียชีวิตจากการจมน้ำของเด็กอายุต่ำกว่า 15 ปี
+
+k104:
+    result: >-
+        SELECT "104" AS kpi_id, "{province}" AS province, d.HOSPCODE AS hospcode, COUNT(DISTINCT d.PID, d.HOSPCODE) AS total,
+        DATE_FORMAT(d.DDEATH, "%Y") AS s_year, DATE_FORMAT(d.DDEATH, "%m") AS s_month
+        FROM death d
+        INNER JOIN person p on p.PID = d.PID and p.HOSPCODE = d.HOSPCODE
+        WHERE d.CDEATH BETWEEN "W65" AND "W7499" AND d.DDEATH BETWEEN "{start}" AND "{end}"
+        AND TIMESTAMPDIFF(YEAR, "{start}", p.BIRTH) < 15
+        AND p.TYPEAREA in ("1", "3") AND d.HOSPCODE IN
+        (SELECT hoscode FROM chospital WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY d.HOSPCODE, s_year, s_month
+
+    target: >-
+        SELECT "104" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, p.HOSPCODE AS hospcode, COUNT(DISTINCT p.PID, p.HOSPCODE) AS total
+        FROM person AS p WHERE TIMESTAMPDIFF(YEAR, "{start}", p.BIRTH) < 15
+        AND p.TYPEAREA in ("1", "3") AND p.HOSPCODE IN
+        (SELECT hoscode FROM chospital WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY p.HOSPCODE
+
+# 105 อัตราการคลอดมีชีพในหญิงอายุ 15-19 ปี
+k105:
+    result: >-
+        SELECT "105" AS kpi_id, "{province}" AS province, p.HOSPCODE AS hospcode,
+        COUNT(DISTINCT l.HOSPCODE, l.PID) AS total,
+        DATE_FORMAT(l.BDATE, "%Y") AS s_year, DATE_FORMAT(l.BDATE, "%m") AS s_month
+        FROM labor AS l
+        INNER JOIN person as p ON p.HOSPCODE = l.HOSPCODE AND p.PID = l.PID
+        LEFT JOIN death ON death.HOSPCODE = l.HOSPCODE AND death.PID = l.PID
+        WHERE l.BDATE BETWEEN "{start}" AND "{end}"
+        AND p.sex = "2"
+        AND (
+        TIMESTAMPDIFF(MONTH, p.BIRTH, "{start}") BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 1 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 2 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 3 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 4 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 5 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 6 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 7 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 8 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 9 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 10 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 11 MONTH) BETWEEN 15 AND 19
+        )
+        AND p.TYPEAREA IN ("1", "3")
+        AND p.HOSPCODE IN
+        (
+        SELECT hoscode
+        FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}"
+        )
+        AND (death.DDEATH is null OR (death.DDEATH <> l.BDATE))
+        GROUP BY p.HOSPCODE, s_year, s_month
+
+    target: >-
+        SELECT "105" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, p.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.PID, p.HOSPCODE) AS total
+        FROM person AS p
+        LEFT JOIN death ON death.HOSPCODE=p.HOSPCODE AND death.PID=p.PID
+        WHERE p.SEX="2"
+        AND (
+        TIMESTAMPDIFF(MONTH, p.BIRTH, "{start}") BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 1 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 2 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 3 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 4 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 5 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 6 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 7 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 8 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 9 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 10 MONTH) BETWEEN 15 AND 19 OR
+        TIMESTAMPDIFF(YEAR, p.BIRTH, "{start}" + INTERVAL 11 MONTH) BETWEEN 15 AND 19)
+        AND p.TYPEAREA IN ("1", "3")
+        AND p.HOSPCODE IN (
+        SELECT hoscode
+        FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}")
+        AND (death.DDEATH is null)
+        GROUP BY p.HOSPCODE
+# 107 อัตราตายจากอุบัติเหตุทางถนน
+k107:
+    result: >-
+        SELECT "107" AS kpi_id, "{province}" AS province, p.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.HOSPCODE, p.PID) AS total,
+        DATE_FORMAT(d.DDEATH, "%Y") AS s_year,
+        DATE_FORMAT(d.DDEATH, "%m") AS s_month
+        FROM death AS d
+        INNER JOIN person AS p ON p.PID=d.PID AND p.HOSPCODE=d.HOSPCODE
+        WHERE d.CDEATH BETWEEN "V01" and "V899"    AND d.DDEATH BETWEEN "{start}" AND "{end}"
+        AND p.TYPEAREA IN ("1", "3") AND p.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY p.HOSPCODE, s_month, s_year
+    target: >-
+        SELECT "107" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, p.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.HOSPCODE, p.PID) AS total
+        FROM person AS p
+        WHERE p.TYPEAREA IN ("1", "3")
+        AND p.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY p.HOSPCODE
+# 108  อัตราตายจากโรคหลอดเลือดหัวใจ
+k108:
+    result: >-
+        SELECT "108" AS kpi_id, "{province}" AS province, p.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.HOSPCODE, p.PID) AS total,
+        DATE_FORMAT(d.DDEATH, "%Y") AS s_year, DATE_FORMAT(d.DDEATH, "%m") AS s_month
+        FROM death AS d
+        INNER JOIN person AS p ON p.PID=d.PID AND p.HOSPCODE=d.HOSPCODE
+        WHERE d.CDEATH BETWEEN "I20" and "I259" AND d.DDEATH BETWEEN "{start}" AND "{end}"
+        AND p.TYPEAREA IN ("1", "3")
+        AND p.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY p.HOSPCODE
+    target: >-
+        SELECT "108" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, p.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.HOSPCODE, p.PID) AS total
+        FROM person AS p
+        WHERE p.TYPEAREA IN ("1", "3")
+        AND p.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY p.HOSPCODE
+# 205  ร้อยละของการตั้งครรภ์ซ้าในวัยรุ่นอายุ 15-19 ปี
+k205:
+    result: >-
+        SELECT "205" AS kpi_id, "{province}" AS province, l.HOSPCODE AS hospcode,
+        DATE_FORMAT(l.BDATE, "%Y") AS s_year,
+        DATE_FORMAT(l.BDATE, "%m") AS s_month,
+        COUNT(DISTINCT l.CID, l.HOSPCODE) AS total
+        FROM tmp_labor l
+        WHERE l.BDATE BETWEEN "{start}" AND "{end}"  AND l.age_y BETWEEN 15 AND 19
+        AND l.HOSPCODE=l.BHOSP AND l.GRAVIDA>1
+        AND l.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}")
+        GROUP BY l.HOSPCODE, s_year, s_month
+    target: >-
+        SELECT "205" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, l.HOSPCODE AS hospcode,
+        COUNT(DISTINCT l.CID, l.HOSPCODE) AS total
+        FROM tmp_labor l
+        WHERE l.BDATE BETWEEN "{start}" AND "{end}" AND l.age_y BETWEEN 15 AND 19 
+        AND l.HOSPCODE=l.BHOSP AND l.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}")
+        GROUP BY l.HOSPCODE
+
+# 208  ร้อยละของผู้ป่วยเบาหวานที่ควบคุมระดับน้าตาลในเลือดได้ดี (E10-E14)
+k208:
+    result: >-
+        SELECT "208" AS kpi_id, "{province}" AS province, t.HOSPCODE AS hospcode,
+        COUNT(DISTINCT t.CID, t.HOSPCODE) AS total,
+        DATE_FORMAT(t.ld_fpg2, "%Y") AS s_year,
+        DATE_FORMAT(t.ld_fpg2, "%m") AS s_month
+        FROM t_dmht AS t
+        WHERE t.type_dx in ("02", "03")
+        AND t.rs_hba1c is not null and t.rs_hba1c < 7 AND t.ld_hba1c BETWEEN "{start}" AND "{end}"
+        AND t.rs_fpg2 BETWEEN 70 AND 130  AND t.ld_fpg2 BETWEEN "{start}" AND "{end}"
+        AND t.HOSPCODE IN ( SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY t.HOSPCODE, s_year, s_month
+    target: >-
+        SELECT "208" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, t.HOSPCODE AS hospcode,
+        COUNT(DISTINCT t.CID, t.HOSPCODE) AS total
+        FROM t_dmht AS t
+        WHERE t.type_dx in ("02", "03")
+        AND t.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY t.HOSPCODE
+# 209  ร้อยละของผู้ป่วยความดันโลหิตสูงที่ควบคุมความดันได้ดี (I10-I15)
+k209:
+    result: >-
+        SELECT "209" AS kpi_id, "{province}" AS province, t.HOSPCODE AS hospcode,
+        COUNT(DISTINCT if(type_dx in("01") AND t.rs_bps1 <140 AND t.rs_bps2 <140  AND t.rs_bpd1 <90 AND t.rs_bpd2 <90, t.cid, 0)) +
+        COUNT(DISTINCT if(type_dx in("03") AND t.rs_bps1 <140 AND t.rs_bps2 <140  AND t.rs_bpd1 <80 AND t.rs_bpd2 <80, t.cid, 0)) AS total,
+        DATE_FORMAT(t.ld_bp1, "%Y") AS s_year, DATE_FORMAT(t.ld_bp1, "%m") AS s_month
+        FROM t_dmht AS t
+        WHERE t.type_dx in ("01", "03")
+        AND t.ld_bp1 BETWEEN "{start}" AND "{end}"
+        AND t.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY t.HOSPCODE, s_year, s_month
+    target: >-
+        SELECT "209" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, t.HOSPCODE AS hospcode,
+        COUNT(DISTINCT t.CID) AS total
+        FROM t_dmht AS t
+        WHERE t.type_dx in ("01", "03")
+        AND t.HOSPCODE IN (
+        SELECT hoscode
+        FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY t.HOSPCODE
+# 210 อัตราป่วยรายใหม่จากโรคเบาหวาน
+k210:
+    result: >-
+        SELECT "210" AS kpi_id, "{province}" AS province, d.p_hospcode AS hospcode,
+        COUNT(DISTINCT d.p_hospcode, d.cid) AS total,
+        DATE_FORMAT(d.date_dx, "%Y") AS s_year,
+        DATE_FORMAT(d.date_dx, "%m") AS s_month
+        FROM t_chronic AS d
+        WHERE SUBSTR(d.diagcode, 1, 3) BETWEEN "E10" AND "E14"
+        AND d.date_dx BETWEEN @start AND @end
+        AND d.typedisch NOT IN ("1", "2", "7") AND d.nation="099"
+        AND d.d_typearea in("1", "3")
+        AND d.p_hospcode IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY d.p_hospcode, s_year, s_month
+    target: >-
+        SELECT "210" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, p.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.HOSPCODE, p.CID) AS total
+        FROM person AS p
+        WHERE p.TYPEAREA IN ("1", "3") AND p.NATION="099"
+        AND p.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY p.HOSPCODE
+# 211 อัตราป่วยรายใหม่จากโรคความดัน
+k211:
+    result: >-
+        SELECT "210" AS kpi_id, "{province}" AS province, d.p_hospcode AS hospcode,
+        COUNT(DISTINCT d.p_hospcode, d.cid) AS total,
+        DATE_FORMAT(d.date_dx, "%Y") AS s_year,
+        DATE_FORMAT(d.date_dx, "%m") AS s_month
+        FROM t_chronic AS d
+        WHERE SUBSTR(d.diagcode, 1, 3) BETWEEN "I10" AND "I15"
+        AND d.date_dx BETWEEN "{start}" AND "{end}"
+        AND d.typedisch NOT IN ("1", "2", "7") AND d.nation="099"
+        AND d.d_typearea in("1", "3")
+        AND d.p_hospcode IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY d.p_hospcode, s_year, s_month
+
+    target: >-
+        SELECT "211" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, p.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.HOSPCODE, p.CID) AS total
+        FROM person AS p
+        WHERE p.TYPEAREA IN ("1", "3") AND p.NATION="099"
+        AND p.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY p.HOSPCODE
+
+# 220 ร้อยละของผู้ป่วยโรคกล้ามเนื้อหัวใจขาดเลือดเฉียบพลัน (STEMI) ได้รับยา ละลายลิ่มเลือด และ/หรือ การขยายหลอดเลือดหัวใจ ( PPCI – PrimaryPercutaneous Cardiac Intervention) (ร้อยละ 75 )
+k220:
+    result: >-
+        SELECT "220" AS kpi_id, "{province}" AS province, s.HOSPCODE AS hospcode, s.DATE_SERV,
+        COUNT(DISTINCT s.HOSPCODE, s.PID) AS total,
+        DATE_FORMAT(s.DATE_SERV, "%Y") AS s_year,
+        DATE_FORMAT(s.DATE_SERV, "%m") AS s_month
+        FROM (
+        SELECT o.HOSPCODE,o.PID, p.PROCEDCODE, o.DATE_SERV
+        FROM tmp_diag_opd o
+        LEFT JOIN tmp_procedure_opd p ON  o.HOSPCODE=p.HOSPCODE AND o.PID=p.PID  AND o.seq=p.seq
+        WHERE o.DATE_SERV BETWEEN "{start}" AND "{end}"
+        AND SUBSTR(o.DIAGCODE, 1, 4) BETWEEN "I210" AND "I213"
+        AND o.DIAGTYPE in(1)
+        GROUP BY o.HOSPCODE, o.PID, o.DATE_SERV
+        UNION
+        SELECT
+        o.HOSPCODE,o.PID, p.PROCEDCODE, DATE_FORMAT(o.DATETIME_ADMIT, "%Y-%m-%d") AS DATE_SERV
+        FROM tmp_diag_ipd o
+        LEFT JOIN tmp_procedure_ipd p ON  o.HOSPCODE=p.HOSPCODE AND o.an=p.AN
+        WHERE o.DATETIME_ADMIT BETWEEN @start AND @end
+        AND SUBSTR(o.DIAGCODE, 1, 4) BETWEEN "I210" AND "I213"
+        AND o.DIAGTYPE in(1)
+        GROUP BY o.HOSPCODE,o.PID,o.DATETIME_ADMIT) AS s
+        WHERE s.PROCEDCODE in("9910", "3768")
+        AND s.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}")
+        GROUP BY s.HOSPCODE, s_year, s_month
+    target: >-
+        SELECT "220" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, c.hoscode AS hospcode,
+        (
+        SELECT COUNT(DISTINCT o.HOSPCODE, o.PID)
+        FROM tmp_diag_opd AS o
+        WHERE o.DATE_SERV BETWEEN "{start}" AND "{end}"
+        AND SUBSTR(o.DIAGCODE, 1, 4) BETWEEN "I210" AND "I213"
+        AND o.DIAGTYPE in(1)  AND o.HOSPCODE=c.hoscode
+        ) +
+        (
+        SELECT COUNT(DISTINCT o.HOSPCODE,o.PID)
+        FROM tmp_diag_ipd AS o
+        WHERE o.DATETIME_ADMIT BETWEEN "{start}" AND "{end}"
+        AND SUBSTR(o.DIAGCODE, 1, 4) BETWEEN "I210" AND "I213"
+        AND o.DIAGTYPE in(1) AND o.HOSPCODE=c.hoscode
+        ) AS total
+        FROM chospital as c
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND c.provcode = "{province}"
+# 221 อัตราตายผู้ป่วยบาดเจ็บต่อสมองลดลง (Fatality Rate) (รหัส ICD S06.0-S06.9)
+k221:
+    result: >-
+        SELECT "221" AS kpi_id, "{province}" AS province, a.HOSPCODE AS hospcode,
+        COUNT(DISTINCT a.HOSPCODE, a.PID) AS total,
+        DATE_FORMAT(a.DATETIME_DISCH, "%Y") AS s_year,
+        DATE_FORMAT(a.DATETIME_DISCH, "%m") AS s_month
+        FROM tmp_admission AS a
+        INNER JOIN tmp_diag_ipd AS d ON a.AN=d.AN
+        WHERE a.DATETIME_DISCH BETWEEN "{start}" AND "{end}"
+        AND SUBSTR(d.DIAGCODE, 1, 4) BETWEEN "S060" AND "S069"
+        AND (a.DISCHSTATUS in(8, 9) OR a.DISCHTYPE in(8, 9))
+        GROUP BY a.HOSPCODE, s_year, s_month
+    target: >-
+        SELECT "221" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, a.HOSPCODE AS hospcode,
+        COUNT(DISTINCT a.HOSPCODE, a.PID) AS total
+        FROM tmp_admission AS a
+        INNER JOIN tmp_diag_ipd AS d ON a.AN=d.AN
+        WHERE a.DATETIME_DISCH BETWEEN "{start}" AND "{end}"
+        AND SUBSTR(d.DIAGCODE, 1, 4) BETWEEN "S060" AND "S069"
+        AND a.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY a.HOSPCODE
+# 223 ลดอัตราการเสียชีวิตในโรงพยาบาลของทารกแรกเกิดน้าหนักต่ากว่า 2,500 กรัม ภายใน 28 วัน(ร้อยละ 5)
+k223:
+    result: >-
+        SELECT "222" AS kpi_id, "{province}" AS province, l.HOSPCODE AS hospcode,
+        COUNT(DISTINCT n.HOSPCODE, l.PID) AS total,
+        DATE_FORMAT(a.DATETIME_DISCH, "%Y") AS s_year,
+        DATE_FORMAT(a.DATETIME_DISCH, "%m") AS s_month
+        FROM labor l
+        JOIN newborn n ON n.MPID=l.PID AND n.HOSPCODE=l.HOSPCODE
+        JOIN person p ON p.PID=n.PID AND p.HOSPCODE=n.HOSPCODE
+        JOIN admission AS a ON a.HOSPCODE=n.HOSPCODE AND a.PID=n.PID
+        WHERE l.LBORN>0 AND n.BWEIGHT <2500
+        AND p.BIRTH BETWEEN "{start}" AND "{end}"
+        AND a.DATETIME_DISCH BETWEEN "{start}" AND "{end}"
+        AND a.DISCHTYPE IN ("8", "9")
+        AND TIMESTAMPDIFF(DAY, n.BDATE, a.DATETIME_DISCH) <29
+        AND p.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY l.HOSPCODE, s_year, s_month
+    target: >-
+        SELECT "221" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, l.HOSPCODE AS hospcode,
+        COUNT(DISTINCT n.HOSPCODE, l.PID) AS total
+        FROM labor l
+        JOIN newborn n ON n.MPID=l.PID AND n.HOSPCODE=l.HOSPCODE
+        JOIN person p ON p.PID=n.PID AND p.HOSPCODE=n.HOSPCODE
+        WHERE l.LBORN>0 AND n.BWEIGHT<2500
+        AND p.BIRTH BETWEEN "{start}" AND "{end}"
+        AND p.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY l.HOSPCODE
+# 224 ร้อยละของผู้ป่วยโรคซึมเศร้า/โรคจิต เข้าถึงบริการ (ไม่น้อยกว่า 31%)
+k224:
+    result: >-
+        SELECT "224" AS kpi_id, "{province}" AS province, o.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.CID, p.HOSPCODE) AS total,
+        DATE_FORMAT(o.DATE_SERV, "%Y") AS s_year,
+        DATE_FORMAT(o.DATE_SERV, "%m") AS s_month
+        FROM t_person_cid p
+        LEFT JOIN tmp_diag_opd o ON p.cid=o.cid
+        WHERE
+        TIMESTAMPDIFF(YEAR,p.BIRTH,o.DATE_SERV) >15
+        AND o.DATE_SERV BETWEEN "{start}" AND "{end}"
+        AND p.discharge in(9) AND p.check_typearea in("1", "3")
+        AND  p.nation="099"
+        AND (o.DIAGCODE LIKE "F32%" OR o.DIAGCODE LIKE "F33%" OR o.DIAGCODE LIKE "F341%" OR o.DIAGCODE LIKE "F38%" OR o.DIAGCODE LIKE "F39%")
+        AND o.HOSPCODE IN (
+        SELECT hoscode FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY o.HOSPCODE, s_year, s_month
+
+    target: >-
+        SELECT "224" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, o.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.CID, p.HOSPCODE) AS total
+        FROM t_person_cid p
+        LEFT JOIN tmp_diag_opd o ON p.cid=o.cid
+        WHERE TIMESTAMPDIFF(YEAR, p.BIRTH, o.DATE_SERV) >15
+        AND o.DATE_SERV BETWEEN "{start}" AND "{end}"
+        AND p.discharge in(9) AND p.check_typearea in("1", "3")
+        AND  p.nation="099"
+        AND o.HOSPCODE IN
+        (
+        SELECT hoscode
+        FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY o.HOSPCODE
+# 229 อัตราการรับไว้รักษาในโรงพยาบาลผู้ป่วยโรคปอดอุดกั้นเรื้อรัง
+k229:
+    result: >-
+        SELECT "224" AS kpi_id, "{province}" AS province, a.HOSPCODE AS hospcode,
+        COUNT(DISTINCT a.HOSPCODE, a.PID) AS total,
+        DATE_FORMAT(a.DATETIME_DISCH, "%Y") AS s_year,
+        DATE_FORMAT(a.DATETIME_DISCH, "%m") AS s_month
+        FROM admission a
+        JOIN person p ON p.PID = a.PID AND p.HOSPCODE = a.HOSPCODE
+        LEFT JOIN diagnosis_ipd AS i ON i.HOSPCODE=a.HOSPCODE AND i.PID=a.PID
+        WHERE a.DATETIME_DISCH BETWEEN "{start}" AND "{end}"
+        AND (i.DIAGCODE BETWEEN "J440" AND "J449") AND i.DIAGTYPE = "1"
+        AND p.TYPEAREA IN ("1", "3")
+        AND p.NATION="099"
+        AND p.HOSPCODE IN (
+        SELECT hoscode
+        FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY p.HOSPCODE, s_year, s_month
+    target: >-
+        SELECT "224" AS kpi_id, "{kpiYear}" AS kpi_year, "{province}" AS province, p.HOSPCODE AS hospcode,
+        COUNT(DISTINCT p.HOSPCODE, p.PID) AS total
+        FROM person p WHERE p.TYPEAREA IN ("1", "3")
+        AND p.NATION="099"
+        AND p.HOSPCODE IN (
+        SELECT hoscode
+        FROM chospital
+        WHERE hostype in ("03", "06", "07", "05", "11", "12", "15", "13", "14", "18")
+        AND chospital.provcode = "{province}") GROUP BY p.HOSPCODE
+
+updated: 2015-07-15
+version: 1.0.5
