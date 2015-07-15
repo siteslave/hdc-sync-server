@@ -4,4 +4,6 @@
 `cd hdc-sync-server`
 `npm install`
 `node bin/hdc-sync-server`
-    
+
+# Configure
+Edit file app.js
