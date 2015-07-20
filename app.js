@@ -23,7 +23,7 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(multer({
-  dest: './uploaded',
+  dest: '../uploaded',
   rename: function (fieldname, filename) {
     return filename.replace(/\W+/g, '-').toLowerCase() + '-' + Date.now()
   }
